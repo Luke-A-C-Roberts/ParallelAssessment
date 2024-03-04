@@ -1,91 +1,91 @@
 #include <iostream>
 #include <vector>
+#include <string>
 
 #include "Utils.h"
 #include "CImg.h"
 
+#include <CL/opencl.hpp>
+
+#include "dtypes.h"
+
 using namespace cimg_library;
 
-void print_help() {
-	std::cerr << "Application usage:" << std::endl;
 
-	std::cerr << "  -p : select platform " << std::endl;
-	std::cerr << "  -d : select device" << std::endl;
-	std::cerr << "  -l : list all platforms and devices" << std::endl;
-	std::cerr << "  -f : input image file (default: test.ppm)" << std::endl;
-	std::cerr << "  -h : print this message" << std::endl;
+void print_platform(ci32& platform_id, ci32& device_id) {
+	std::cout
+		<< "Running on "
+		<< GetPlatformName(platform_id)
+		<< ", "
+		<< GetDeviceName(platform_id, device_id)
+		<< '\n';
 }
 
-int main(int argc, char** argv) {
-	//Part 1 - handle command line options such as device selection, verbosity, etc.
-	int platform_id = 0;
-	int device_id = 0;
-	string image_filename = "test.ppm";
+void print_build_status(const cl::Program& program, const cl::Context& context) {
+	auto build_status = program.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(context.getInfo<CL_CONTEXT_DEVICES>()[0]);
+	auto build_options = program.getBuildInfo<CL_PROGRAM_BUILD_OPTIONS>(context.getInfo<CL_CONTEXT_DEVICES>()[0]);
+	auto build_log = program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(context.getInfo<CL_CONTEXT_DEVICES>()[0]);
+	std::cout
+		<< "Build Status:\n"
+		<< build_status
+		<< "\nBuild Options:\n"
+		<< build_options
+		<< "\nBuild Log:\n"
+		<< build_log
+		<< '\n';
+}
 
-	for (int i = 1; i < argc; i++) {
-		if ((strcmp(argv[i], "-p") == 0) && (i < (argc - 1))) { platform_id = atoi(argv[++i]); }
-		else if ((strcmp(argv[i], "-d") == 0) && (i < (argc - 1))) { device_id = atoi(argv[++i]); }
-		else if (strcmp(argv[i], "-l") == 0) { std::cout << ListPlatformsDevices() << std::endl; }
-		else if ((strcmp(argv[i], "-f") == 0) && (i < (argc - 1))) { image_filename = argv[++i]; }
-		else if (strcmp(argv[i], "-h") == 0) { print_help(); return 0; }
+void build_kernel(const cl::Program& program, const cl::Context& context, cbool debug = false) {
+	try {
+		program.build();
+		if (debug) print_build_status(program, context);
 	}
+	catch (const cl::Error& err) {
+		if (!debug) print_build_status(program, context);
+		throw err;
+	}
+}
 
+
+
+
+auto main(i32 argc, str* argv) -> i32 {
+	ci32 platform_id = 0;
+	ci32 device_id = 0;
+	cstr image_filename = "test.ppm";
+	cstr kernel_fileneame = "kernels.cl";
+	bool debug = false;
 	cimg::exception_mode(0);
+
+	for (cstr arg: argv) {
+		std::string str_arg(arg);
+		if (str_arg == "-p")
+			print_platform(platform_id, device_id);
+		if (str_arg == "-d")
+			debug = true;
+	}
 
 	//detect any potential exceptions
 	try {
-		CImg<unsigned char> image_input(image_filename.c_str());
+		CImg<u8> image_input(image_filename);
 		CImgDisplay disp_input(image_input, "input");
+		auto context = GetContext(platform_id, device_id);
 
-		//a 3x3 convolution mask implementing an averaging filter
-		std::vector<float> convolution_mask = { 1.f / 9, 1.f / 9, 1.f / 9,
-												1.f / 9, 1.f / 9, 1.f / 9,
-												1.f / 9, 1.f / 9, 1.f / 9 };
-
-		//Part 3 - host operations
-		//3.1 Select computing devices
-		cl::Context context = GetContext(platform_id, device_id);
-
-		//display the selected device
-		std::cout << "Running on " << GetPlatformName(platform_id) << ", " << GetDeviceName(platform_id, device_id) << std::endl;
-
-		//create a queue to which we will push commands for the device
 		cl::CommandQueue queue(context);
-
-		//3.2 Load & build the device code
 		cl::Program::Sources sources;
-
-		AddSources(sources, "kernels.cl");
-
+		AddSources(sources, kernel_fileneame);
 		cl::Program program(context, sources);
 
-		//build and debug the kernel code
-		try {
-			program.build();
-		}
-		catch (const cl::Error& err) {
-			std::cout << "Build Status: " << program.getBuildInfo<CL_PROGRAM_BUILD_STATUS>(context.getInfo<CL_CONTEXT_DEVICES>()[0]) << std::endl;
-			std::cout << "Build Options:\t" << program.getBuildInfo<CL_PROGRAM_BUILD_OPTIONS>(context.getInfo<CL_CONTEXT_DEVICES>()[0]) << std::endl;
-			std::cout << "Build Log:\t " << program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(context.getInfo<CL_CONTEXT_DEVICES>()[0]) << std::endl;
-			throw err;
-		}
+		build_kernel(program, context, debug);
 
-		//Part 4 - device operations
-
-		//device - buffers
 		cl::Buffer dev_image_input(context, CL_MEM_READ_ONLY, image_input.size());
 		cl::Buffer dev_image_output(context, CL_MEM_READ_WRITE, image_input.size()); //should be the same as input image
-		//		cl::Buffer dev_convolution_mask(context, CL_MEM_READ_ONLY, convolution_mask.size()*sizeof(float));
 
-				//4.1 Copy images to device memory
 		queue.enqueueWriteBuffer(dev_image_input, CL_TRUE, 0, image_input.size(), &image_input.data()[0]);
-		//		queue.enqueueWriteBuffer(dev_convolution_mask, CL_TRUE, 0, convolution_mask.size()*sizeof(float), &convolution_mask[0]);
 
-				//4.2 Setup and execute the kernel (i.e. device code)
 		cl::Kernel kernel = cl::Kernel(program, "identity");
 		kernel.setArg(0, dev_image_input);
 		kernel.setArg(1, dev_image_output);
-		//		kernel.setArg(2, dev_convolution_mask);
 
 		queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(image_input.size()), cl::NullRange);
 

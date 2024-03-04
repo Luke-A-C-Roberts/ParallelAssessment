@@ -24,4 +24,9 @@
     <CopyFileToFolders Include="images\test.ppm" />
     <CopyFileToFolders Include="images\test_large.ppm" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="dtypes.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
 </Project>
