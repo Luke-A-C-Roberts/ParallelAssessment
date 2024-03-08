@@ -1,12 +1,12 @@
+#include <array>
 #include <iostream>
 #include <vector>
 #include <string>
 
-#include "Utils.h"
-#include "CImg.h"
-
 #include <CL/opencl.hpp>
 
+#include "Utils.h"
+#include "CImg.h"
 #include "dtypes.h"
 
 using namespace cimg_library;
@@ -46,24 +46,26 @@ void build_kernel(const cl::Program& program, const cl::Context& context, cbool 
 	}
 }
 
-
-
-
-auto main(i32 argc, str* argv) -> i32 {
-	ci32 platform_id = 0;
-	ci32 device_id = 0;
-	cstr image_filename = "test.ppm";
-	cstr kernel_fileneame = "kernels.cl";
-	bool debug = false;
-	cimg::exception_mode(0);
-
-	for (cstr arg: argv) {
+void handle_args(ci32& argc, str* argv, ci32& platform_id, ci32& device_id, bool& debug) {
+	std::vector<str> argv_vec(argv, argv + sizeof(str) * argc);
+	for (cstr arg : argv_vec) {
 		std::string str_arg(arg);
 		if (str_arg == "-p")
 			print_platform(platform_id, device_id);
 		if (str_arg == "-d")
 			debug = true;
 	}
+}
+
+auto main(i32 argc, str* argv) -> i32 {
+	ci32 platform_id = 0;
+	ci32 device_id = 0;
+	bool debug = false;
+	handle_args(argc, argv, platform_id, device_id, debug);
+
+	cstr image_filename = "test.ppm";
+	cstr kernel_fileneame = "kernels.cl";
+	cimg::exception_mode(0);
 
 	//detect any potential exceptions
 	try {

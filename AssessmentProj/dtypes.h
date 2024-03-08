@@ -16,13 +16,7 @@ typedef const signed long long ci128;
 typedef const signed long ci64;
 typedef const signed int ci32;
 typedef const signed short ci16;
-typedef const signed char I128_SIZE;
-
-#define I128_SIZE 128
-#define I64_SIZE 64
-#define I32_SIZE 32
-#define I16_SIZE 16
-#define I8_SIZE 8
+typedef const signed char ci8;
 
 //----------UInts----------//
 
@@ -39,12 +33,6 @@ typedef const unsigned char cu8;
 
 typedef unsigned long int size;
 typedef const unsigned long int csize;
-
-#define U128_SIZE 128
-#define U64_SIZE 64
-#define U32_SIZE 32
-#define U16_SIZE 16
-#define U8_SIZE 8
 
 //----------Float----------//
 
@@ -73,19 +61,4 @@ typedef void* ptr;
 typedef const void* cptr;
 
 /*********DataSizes*********/
-
-#define I64_SIZE 8
-#define I32_SIZE 4
-#define I16_SIZE 2
-#define I8_SIZE  1
-
-#define U64_SIZE 8
-#define U32_SIZE 4
-#define U16_SIZE 2
-#define U8_SIZE  1
-
-#define F64_SIZE 8
-#define F32_SIZE 4
-
-#define PTR_SIZE 8
 
