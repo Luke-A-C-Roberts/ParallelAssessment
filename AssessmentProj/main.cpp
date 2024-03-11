@@ -1,12 +1,13 @@
-#include <array>
 #include <iostream>
 #include <vector>
 #include <string>
-
-#include <CL/opencl.hpp>
+#include <tuple>
 
 #include "Utils.h"
 #include "CImg.h"
+
+#include <CL/opencl.hpp>
+
 #include "dtypes.h"
 
 using namespace cimg_library;
@@ -57,31 +58,90 @@ void handle_args(ci32& argc, str* argv, ci32& platform_id, ci32& device_id, bool
 	}
 }
 
+template<typename T>
+auto load_image(const std::string& image_filename) -> std::pair<CImg<T>, CImgDisplay> {
+	/*
+	This sections loads the input image into a cimage_library::CImg<unsigned char> (8 bit color)
+	and and passes it by reference into a cimage_library::CImgDisplay so that it can later be displayed
+	*/
+	CImg<T> image_input(image_filename);
+	return std::pair<CImg<T>, CImgDisplay>(
+		image_input,
+		CImgDisplay(image_input, "input")
+	);
+}
+
+auto make_opencl_program(
+	ci32& platform_id,
+	ci32& device_id,
+	const std::string& kernel_filename,
+	cbool& debug
+) -> tuple<cl::Context, cl::Program, cl::CommandQueue> {
+	/*
+	A cl::Context is used so that opencl can manage memory, devives and error handelling.
+	Opencl errors are passed back to the program and handeled by catchine a cl::Error.
+	Then a cl::CommandQueue is created so that opencl commands can be queued and ran asynchronously.
+	A cl::ProgramSources class is used to retrieve the opencl source code from kernels.cl and then
+	the program is constructed using both our context and sources. Finally `build_kernel` (see above)
+	is called to build `program` and handel debuging output and exceptions.
+	*/
+	auto context = GetContext(platform_id, device_id);
+	cl::CommandQueue queue(context);
+	cl::Program::Sources sources;
+	AddSources(sources, kernel_filename);
+	cl::Program program(context, sources);
+	build_kernel(program, context, debug);
+
+	return tuple<cl::Context, cl::Program, cl::CommandQueue>(context, program, queue);
+}
+
+template <typename T>
+auto make_io_buffers(
+	const cl::Context& context,
+	const UINT_PTR& size
+) -> std::pair<cl::Buffer, cl::Buffer> {
+	/*
+	Creates two cl::Buffer structs for input and output. Input only has read permissions while output can
+	be read and written.
+	*/
+	std::pair<cl::Buffer, cl::Buffer>(
+		cl::Buffer(context, CL_MEM_READ_ONLY, size);
+		cl::Buffer(context, CL_MEM_READ_WRITE, size); //should be the same as input image
+	);
+}
+
 auto main(i32 argc, str* argv) -> i32 {
+	// sets up some constants later used in the cl::Context and the relatative path of the files to be used
 	ci32 platform_id = 0;
 	ci32 device_id = 0;
+	std::string image_filename = "test.ppm";
+	std::string kernel_fileneame = "kernels.cl";
+	
+	// debug used for testing and activated in handle_args if -d is in argv
 	bool debug = false;
 	handle_args(argc, argv, platform_id, device_id, debug);
-
-	cstr image_filename = "test.ppm";
-	cstr kernel_fileneame = "kernels.cl";
+	
 	cimg::exception_mode(0);
 
 	//detect any potential exceptions
 	try {
-		CImg<u8> image_input(image_filename);
-		CImgDisplay disp_input(image_input, "input");
-		auto context = GetContext(platform_id, device_id);
+		// this would look better with c++17 structured bindings but alas
+		// Image
+		auto input = load_image<u8>(image_filename);
+		auto& image_input = input.first;
+		auto& disp_input = input.second;
+		auto size_input = image_input.size();
 
-		cl::CommandQueue queue(context);
-		cl::Program::Sources sources;
-		AddSources(sources, kernel_fileneame);
-		cl::Program program(context, sources);
+		// cl::Context, cl::Program and cl::CommandQueue (see `make_opencl_program`)
+		auto opencl_program = make_opencl_program(platform_id, device_id, kernel_fileneame, debug);
+		auto& context = std::get<0>(opencl_program);
+		auto& program = std::get<1>(opencl_program);
+		auto& queue = std::get<2>(opencl_program);
 
-		build_kernel(program, context, debug);
-
-		cl::Buffer dev_image_input(context, CL_MEM_READ_ONLY, image_input.size());
-		cl::Buffer dev_image_output(context, CL_MEM_READ_WRITE, image_input.size()); //should be the same as input image
+		// cl::Buffer created to hold image data
+		auto io_buffers = make_io_buffers<u8>(context, size_input);
+		auto& dev_image_input = io_buffers.first;
+		auto& dev_image_output = io_buffers.second;
 
 		queue.enqueueWriteBuffer(dev_image_input, CL_TRUE, 0, image_input.size(), &image_input.data()[0]);
 
