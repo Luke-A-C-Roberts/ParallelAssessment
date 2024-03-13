@@ -31,8 +31,8 @@ typedef const unsigned int cu32;
 typedef const unsigned short cu16;
 typedef const unsigned char cu8;
 
-typedef unsigned long int size;
-typedef const unsigned long int csize;
+// typedef unsigned long int size;
+// typedef const unsigned long int csize;
 
 //----------Float----------//
 
