@@ -61,7 +61,7 @@ class HistFilter {
 
 	void _build_kernel(const cl::Program&, const cl::Context&, cbool&);
 	auto _load_image(const std::string&) -> std::pair<CImg<T>, CImgDisplay>;
-	auto _make_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer>;
+	auto _make_image_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer>;
 
 public:
 	HistFilter(
@@ -105,7 +105,7 @@ auto HistFilter<T>::_load_image(const std::string& image_filename) -> std::pair<
 }
 
 template <typename T>
-auto HistFilter<T>::_make_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer> {
+auto HistFilter<T>::_make_image_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer> {
 	/*
 	Creates two cl::Buffer structs for input and output. Input only has read permissions while output can
 	be read and written.
@@ -114,6 +114,36 @@ auto HistFilter<T>::_make_io_buffers(const cl::Context& context, const UINT_PTR&
 		cl::Buffer(context, CL_MEM_READ_ONLY, size),
 		cl::Buffer(context, CL_MEM_READ_WRITE, size) //should be the same as input image
 	);
+}
+
+template <typename T>
+class BufferMap {
+	std::string _kernel_function_name;
+	cl::Program& _program;
+	cl::CommandQueue& _queue;
+
+public:
+	BufferMap(
+		std::string kernel_function_name,
+		cl::Program& program,
+		cl::CommandQueue& queue
+	):  _kernel_function_name(kernel_function_name),
+	    _program(program),
+		_queue(queue) {}
+
+	void read_write(cl::Buffer&, cl::Buffer&, const UINT_PTR&);
+	//void read_write(cl::Buffer&, cl::Buffer&, std::vector<T>&);
+	//void read_write(cl::Buffer&, cl::Buffer&, std::vector<std::vector<T>>&);
+};
+
+template<typename T>
+void BufferMap<T>::read_write(cl::Buffer& in, cl::Buffer& out, const UINT_PTR& size) {
+
+	cl::Kernel kernel = cl::Kernel(_program, _kernel_function_name.c_str());
+	kernel.setArg(0, in);
+	kernel.setArg(1, out);
+
+	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(size), cl::NullRange);
 }
 
 template<typename T>
@@ -142,17 +172,15 @@ void HistFilter<T>::output() {
 	_build_kernel(program, context, _debug);
 
 	// cl::Buffer created to hold image data
-	auto io_buffers = _make_io_buffers(context, size_input);
+	auto io_buffers = _make_image_io_buffers(context, size_input);
 	auto& dev_image_input = io_buffers.first;
 	auto& dev_image_output = io_buffers.second;
 
 	queue.enqueueWriteBuffer(dev_image_input, CL_TRUE, 0, image_input.size(), &image_input.data()[0]);
 
-	cl::Kernel kernel = cl::Kernel(program, "identity");
-	kernel.setArg(0, dev_image_input);
-	kernel.setArg(1, dev_image_output);
-
-	queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(image_input.size()), cl::NullRange);
+	// buffer map takes an input and output buffer and is used to apply a kernel function by name
+	BufferMap<T> buff_map("identity", program, queue);
+	buff_map.read_write(dev_image_input, dev_image_output, image_input.size());
 
 	vector<T> output_buffer(image_input.size());
 	queue.enqueueReadBuffer(dev_image_output, CL_TRUE, 0, output_buffer.size(), &output_buffer.data()[0]);
@@ -194,3 +222,4 @@ auto main(i32 argc, str* argv) -> i32 {
 
 	return EXIT_SUCCESS;
 }
+
