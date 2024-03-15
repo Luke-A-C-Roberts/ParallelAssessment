@@ -74,8 +74,7 @@ class HistFilter {
 	bool _debug;
 
 	void _build_kernel(const cl::Program&, const cl::Context&, cbool&);
-	auto _load_image(const std::string&) -> std::pair<CImg<T>, CImgDisplay>;
-	auto _make_image_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer>;
+	auto _load_image(const std::string&, const std::string&) -> std::pair<CImg<T>, CImgDisplay>;
 
 public:
 	HistFilter(
@@ -106,12 +105,20 @@ void HistFilter<T>::_build_kernel(const cl::Program& program, const cl::Context&
 }
 
 template<typename T>
-auto HistFilter<T>::_load_image(const std::string& image_filename) -> std::pair<CImg<T>, CImgDisplay> {
+auto HistFilter<T>::_load_image(const std::string& image_filename, const std::string& mode) -> std::pair<CImg<T>, CImgDisplay> {
 	/*
 	This sections loads the input image into a cimage_library::CImg<T>
 	and and passes it by reference into a cimage_library::CImgDisplay so that it can later be displayed
 	*/
 	CImg<T> image_input(image_filename.c_str());
+	if (mode == "rgb") { }
+	else if (mode == "hsl") {
+		image_input = image_input.RGBtoHSL();
+	}
+	else if (mode == "hsv") {
+		image_input = image_input.RGBtoHSV();
+	}
+	
 	return std::pair<CImg<T>, CImgDisplay>(
 		image_input,
 		CImgDisplay(image_input, "input")
@@ -167,7 +174,7 @@ void HistFilter<T>::output() {
 	//detect any potential exceptions
 	// this would look better with c++17 structured bindings but alas
 	// Image
-	auto input = _load_image(_image_filename);
+	auto input = _load_image(_image_filename, "hsl");
 	auto& input_image = input.first;
 	auto& input_disp = input.second;
 	const auto input_size = input_image.size();
@@ -193,16 +200,16 @@ void HistFilter<T>::output() {
 
 	cl::Buffer input_buffer(context, CL_MEM_READ_ONLY, input_size);
 	queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, input_size, &input_image.data()[0]);
-	cl::Buffer hsl_img_buffer(context, CL_MEM_READ_WRITE, input_size * sizeof(f32));
-	BufferMapper(program, queue, input_buffer, hsl_img_buffer, input_size * sizeof(f32)).map("u8_to_hsl_f32");
 
-	vector<f32> hsl_data(input_size * sizeof(f32));
-	queue.enqueueReadBuffer(hsl_img_buffer, CL_TRUE, 0, input_size * sizeof(f32), &hsl_data.data()[0]);
-	CImg<f32> hsl_img(hsl_data.data(), input_width, input_height, input_depth, input_spectrum);
-	CImgDisplay hsl_disp(hsl_img, "hsl");
+	cl::Buffer output_buffer(context, CL_MEM_READ_WRITE, input_size);
+	BufferMapper(program, queue, input_buffer, output_buffer, input_size).map("identity");
 
-	while (!hsl_disp.is_closed() && !hsl_disp.is_keyESC()) {
-		hsl_disp.wait(1);
+	std::vector<T> output_vector(input_size);
+	queue.enqueueReadBuffer(output_buffer, CL_TRUE, 0, input_size, &output_vector.data()[0]);
+	CImg<T> output_image(output_vector.data(), input_width, input_height, input_depth, input_spectrum);
+	CImgDisplay output_disp(output_image, "output");
+	while (!output_disp.is_closed() && !output_disp.is_keyESC()) {
+		output_disp.wait(1);
 	}
 }
 
