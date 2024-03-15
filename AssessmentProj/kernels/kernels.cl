@@ -10,7 +10,53 @@ kernel void filter_r(global const uchar* A, global uchar* B) {
 	int colour_channel = id / image_size; // 0 - red, 1 - green, 2 - blue
 
 	//this is just a copy operation, modify to filter out the individual colour channels
-	B[id] = A[id];
+	if (colour_channel == 0) {
+		B[id] = A[id];
+	}
+	else {
+		B[id] = 0;
+	}
+}
+
+kernel void u8_to_hsl_f32(global const uchar* input, global float* output) {
+	int width = get_global_size(0);
+	int height = get_global_size(1);
+	int image_size = width * height;
+	int channels = get_global_size(2);
+	int x = get_global_id(0);
+	int y = get_global_id(1);
+
+	if (x >= width || y >= height)
+		return;
+
+	int id = y * width * 3 + x * 3;
+	float r = input[id] / 255.0;
+	float g = input[id + 1] / 255.0;
+	float b = input[id + 2] / 255.0;
+
+	// https://www.niwa.nu/2013/05/math-behind-colorspace-conversions-rgb-hsl/
+	float cmax = fmax(fmax(r, g), b);
+	float cmin = fmin(fmin(r, g), b);
+	float cdelta = cmax - cmin;
+	float csum = cmax + cmin;
+
+	float l = csum / 2.0;
+	float s = (l <= 0.5) ? (cdelta / csum) : (cdelta / (2.0 - cmax - cmin));
+	float h;
+	if (cmax == r) {
+		h = (g - b) / cdelta;
+	}
+	else if (cmax == g) {
+		h = 2.0 + (b - r) / cdelta;
+	}
+	else if (cmax == b) {
+		h = 4.0 + (r - g) / cdelta;
+	}
+
+
+	output[id] = h;
+	output[id + 1] = s;
+	output[id + 2] = l;
 }
 
 //simple ND identity kernel

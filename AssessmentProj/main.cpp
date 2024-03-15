@@ -46,6 +46,20 @@ void print_build_status(const cl::Program& program, const cl::Context& context) 
 		<< '\n';
 }
 
+template<typename T>
+void print_image_info(const CImg<T> c_img) {
+	std::cout
+		<< "width: "
+		<< c_img.width()
+		<< ", height: "
+		<< c_img.height()
+		<< ", depth: "
+		<< c_img.depth()
+		<< ", spectrum: "
+		<< c_img.spectrum()
+		<< "\n";
+}
+
 std::string relative_path() {
 	const std::string path(__FILE__);
 	const std::string main_f("main.cpp");
@@ -104,46 +118,48 @@ auto HistFilter<T>::_load_image(const std::string& image_filename) -> std::pair<
 	);
 }
 
-template <typename T>
-auto HistFilter<T>::_make_image_io_buffers(const cl::Context& context, const UINT_PTR& size) -> std::pair<cl::Buffer, cl::Buffer> {
-	/*
-	Creates two cl::Buffer structs for input and output. Input only has read permissions while output can
-	be read and written.
-	*/
-	return std::pair<cl::Buffer, cl::Buffer>(
-		cl::Buffer(context, CL_MEM_READ_ONLY, size),
-		cl::Buffer(context, CL_MEM_READ_WRITE, size) //should be the same as input image
-	);
-}
-
-template <typename T>
-class BufferMap {
-	std::string _kernel_function_name;
+class BufferMapper {
 	cl::Program& _program;
 	cl::CommandQueue& _queue;
+	cl::Buffer& _input_buffer;
+	cl::Buffer& _output_buffer;
+	UINT_PTR _size;
 
 public:
-	BufferMap(
-		std::string kernel_function_name,
+	BufferMapper(
 		cl::Program& program,
-		cl::CommandQueue& queue
-	):  _kernel_function_name(kernel_function_name),
-	    _program(program),
-		_queue(queue) {}
+		cl::CommandQueue& queue,
+		cl::Buffer& input_buffer,
+		cl::Buffer& output_buffer,
+		const UINT_PTR& size
+	):  _program(program),
+		_queue(queue),
+	    _input_buffer(input_buffer),
+		_output_buffer(output_buffer),
+		_size(size) {}
 
-	void read_write(cl::Buffer&, cl::Buffer&, const UINT_PTR&);
-	//void read_write(cl::Buffer&, cl::Buffer&, std::vector<T>&);
-	//void read_write(cl::Buffer&, cl::Buffer&, std::vector<std::vector<T>>&);
+	void map(const std::string&);
+	void map(const std::string&, cu32&, cu32&);
 };
 
-template<typename T>
-void BufferMap<T>::read_write(cl::Buffer& in, cl::Buffer& out, const UINT_PTR& size) {
+void BufferMapper::map(const std::string& kernel_function_name) {
 
-	cl::Kernel kernel = cl::Kernel(_program, _kernel_function_name.c_str());
-	kernel.setArg(0, in);
-	kernel.setArg(1, out);
+	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
+	kernel.setArg(0, _input_buffer);
+	kernel.setArg(1, _output_buffer);
 
-	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(size), cl::NullRange);
+	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
+}
+
+void BufferMapper::map(const std::string& kernel_function_name, cu32& width, cu32& height) {
+
+	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
+	kernel.setArg(0, _input_buffer);
+	kernel.setArg(1, _output_buffer);
+	kernel.setArg(2, width);
+	kernel.setArg(3, height);
+
+	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
 }
 
 template<typename T>
@@ -152,9 +168,13 @@ void HistFilter<T>::output() {
 	// this would look better with c++17 structured bindings but alas
 	// Image
 	auto input = _load_image(_image_filename);
-	auto& image_input = input.first;
-	auto& disp_input = input.second;
-	auto size_input = image_input.size();
+	auto& input_image = input.first;
+	auto& input_disp = input.second;
+	const auto input_size = input_image.size();
+	const auto input_height = input_image.height();
+	const auto input_width = input_image.width();
+	const auto input_depth = input_image.depth();
+	const auto input_spectrum = input_image.spectrum();
 
 	/*
 	A cl::Context is used so that opencl can manage memory, devives and error handling.
@@ -171,28 +191,19 @@ void HistFilter<T>::output() {
 	cl::Program program(context, sources);
 	_build_kernel(program, context, _debug);
 
-	// cl::Buffer created to hold image data
-	auto io_buffers = _make_image_io_buffers(context, size_input);
-	auto& dev_image_input = io_buffers.first;
-	auto& dev_image_output = io_buffers.second;
+	cl::Buffer input_buffer(context, CL_MEM_READ_ONLY, input_size);
+	queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, input_size, &input_image.data()[0]);
+	cl::Buffer hsl_img_buffer(context, CL_MEM_READ_WRITE, input_size * sizeof(f32));
+	BufferMapper(program, queue, input_buffer, hsl_img_buffer, input_size * sizeof(f32)).map("u8_to_hsl_f32");
 
-	queue.enqueueWriteBuffer(dev_image_input, CL_TRUE, 0, image_input.size(), &image_input.data()[0]);
+	vector<f32> hsl_data(input_size * sizeof(f32));
+	queue.enqueueReadBuffer(hsl_img_buffer, CL_TRUE, 0, input_size * sizeof(f32), &hsl_data.data()[0]);
+	CImg<f32> hsl_img(hsl_data.data(), input_width, input_height, input_depth, input_spectrum);
+	CImgDisplay hsl_disp(hsl_img, "hsl");
 
-	// buffer map takes an input and output buffer and is used to apply a kernel function by name
-	BufferMap<T> buff_map("identity", program, queue);
-	buff_map.read_write(dev_image_input, dev_image_output, image_input.size());
-
-	vector<T> output_buffer(image_input.size());
-	queue.enqueueReadBuffer(dev_image_output, CL_TRUE, 0, output_buffer.size(), &output_buffer.data()[0]);
-
-	CImg<T> output_image(output_buffer.data(), image_input.width(), image_input.height(), image_input.depth(), image_input.spectrum());
-	CImgDisplay disp_output(output_image, "output");
-		
-	while (!disp_input.is_closed() && !disp_output.is_closed() && !disp_input.is_keyESC() && !disp_output.is_keyESC()) {
-		disp_input.wait(1);
-		disp_output.wait(1);
+	while (!hsl_disp.is_closed() && !hsl_disp.is_keyESC()) {
+		hsl_disp.wait(1);
 	}
-
 }
 
 auto main(i32 argc, str* argv) -> i32 {
