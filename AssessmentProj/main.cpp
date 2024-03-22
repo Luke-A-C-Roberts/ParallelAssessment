@@ -67,6 +67,17 @@ std::string relative_path() {
 	return path.substr(0, index);
 }
 
+
+// This is some potential type magic that is useful when converting to hsl because H = 0..360 for hues so a larger type is needed
+// to hold the H value.
+// https://stackoverflow.com/questions/46385892/how-to-get-a-type-that-is-twice-the-size-as-the-specified-type-in-a-templated-fu
+template<class> struct width2;
+template<> struct width2<u8>  { using type = u16;  };
+template<> struct width2<u16> { using type = u32;  };
+template<> struct width2<u32> { using type = u64;  };
+template<> struct width2<u64> { using type = u128; };
+
+
 template <typename T>
 class HistFilter {
 	std::string _image_filename, _kernel_filename;
