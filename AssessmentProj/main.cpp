@@ -174,7 +174,7 @@ void HistFilter<T>::output() {
 	//detect any potential exceptions
 	// this would look better with c++17 structured bindings but alas
 	// Image
-	auto input = _load_image(_image_filename, "hsl");
+	auto input = _load_image(_image_filename, "rgb");
 	auto& input_image = input.first;
 	auto& input_disp = input.second;
 	const auto input_size = input_image.size();
@@ -202,12 +202,14 @@ void HistFilter<T>::output() {
 	queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, input_size, &input_image.data()[0]);
 
 	cl::Buffer output_buffer(context, CL_MEM_READ_WRITE, input_size);
-	BufferMapper(program, queue, input_buffer, output_buffer, input_size).map("identity");
+	BufferMapper(program, queue, input_buffer, output_buffer, input_size).map("u8hsl");
 
 	std::vector<T> output_vector(input_size);
 	queue.enqueueReadBuffer(output_buffer, CL_TRUE, 0, input_size, &output_vector.data()[0]);
 	CImg<T> output_image(output_vector.data(), input_width, input_height, input_depth, input_spectrum);
 	CImgDisplay output_disp(output_image, "output");
+
+
 	while (!output_disp.is_closed() && !output_disp.is_keyESC()) {
 		output_disp.wait(1);
 	}
