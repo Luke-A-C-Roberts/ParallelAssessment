@@ -67,16 +67,65 @@ std::string relative_path() {
 	return path.substr(0, index);
 }
 
+template<typename T>
+auto max_int() -> size_t {
+	return 2 << (sizeof(T) * 8 - 1);
+}
 
-// This is some potential type magic that is useful when converting to hsl because H = 0..360 for hues so a larger type is needed
-// to hold the H value.
-// https://stackoverflow.com/questions/46385892/how-to-get-a-type-that-is-twice-the-size-as-the-specified-type-in-a-templated-fu
-template<class> struct width2;
-template<> struct width2<u8>  { using type = u16;  };
-template<> struct width2<u16> { using type = u32;  };
-template<> struct width2<u32> { using type = u64;  };
-template<> struct width2<u64> { using type = u128; };
+// Buffer Mapper is a kind of curried closure class that takes all of the OpenCL boilerplate and a reference to an input
+// and output buffer. It then maps a kernal function to the input buffer
+class BufferMapper {
+	cl::Program& _program;
+	cl::CommandQueue& _queue;
+	cl::Buffer* _input_buffer;
+	cl::Buffer* _output_buffer;
+	UINT_PTR _size;
 
+public:
+	BufferMapper(
+		cl::Program& program,
+		cl::CommandQueue& queue,
+		cl::Buffer* input_buffer,
+		cl::Buffer* output_buffer,
+		const UINT_PTR& size
+	) : _program(program),
+		_queue(queue),
+		_input_buffer(input_buffer),
+		_output_buffer(output_buffer),
+		_size(size) {}
+
+	// curried function application with optional size
+	void operator()(const std::string&);
+	void operator()(const std::string&, cu32&, cu32&);
+
+	// rather than creating a new BufferMapper object the old output becomes the input to the next kernel function
+	void new_output(cl::Buffer*);
+};
+
+void BufferMapper::operator()(const std::string& kernel_function_name) {
+
+	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
+	kernel.setArg(0, *_input_buffer);
+	kernel.setArg(1, *_output_buffer);
+
+	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
+}
+
+void BufferMapper::operator()(const std::string& kernel_function_name, cu32& width, cu32& height) {
+
+	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
+	kernel.setArg(0, *_input_buffer);
+	kernel.setArg(1, *_output_buffer);
+	kernel.setArg(2, width);
+	kernel.setArg(3, height);
+
+	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
+}
+
+void BufferMapper::new_output(cl::Buffer* new_output_buffer) {
+	_input_buffer = _output_buffer;
+	_output_buffer = new_output_buffer;
+}
 
 template <typename T>
 class HistFilter {
@@ -116,68 +165,24 @@ void HistFilter<T>::_build_kernel(const cl::Program& program, const cl::Context&
 }
 
 template<typename T>
-auto HistFilter<T>::_load_image(const std::string& image_filename, const std::string& mode) -> std::pair<CImg<T>, CImgDisplay> {
+auto HistFilter<T>::_load_image(const std::string& image_filename, const std::string& input_type) -> std::pair<CImg<T>, CImgDisplay> {
 	/*
 	This sections loads the input image into a cimage_library::CImg<T>
 	and and passes it by reference into a cimage_library::CImgDisplay so that it can later be displayed
 	*/
 	CImg<T> image_input(image_filename.c_str());
-	if (mode == "rgb") { }
-	else if (mode == "hsl") {
-		image_input = image_input.RGBtoHSL();
+	if (input_type == "rgb") { }
+	else if (input_type == "hsl") {
+		image_input = image_input.HSLtoRGB();
 	}
-	else if (mode == "hsv") {
-		image_input = image_input.RGBtoHSV();
+	else if (input_type == "hsv") {
+		image_input = image_input.HSVtoRGB();
 	}
 	
 	return std::pair<CImg<T>, CImgDisplay>(
 		image_input,
 		CImgDisplay(image_input, "input")
 	);
-}
-
-class BufferMapper {
-	cl::Program& _program;
-	cl::CommandQueue& _queue;
-	cl::Buffer& _input_buffer;
-	cl::Buffer& _output_buffer;
-	UINT_PTR _size;
-
-public:
-	BufferMapper(
-		cl::Program& program,
-		cl::CommandQueue& queue,
-		cl::Buffer& input_buffer,
-		cl::Buffer& output_buffer,
-		const UINT_PTR& size
-	):  _program(program),
-		_queue(queue),
-	    _input_buffer(input_buffer),
-		_output_buffer(output_buffer),
-		_size(size) {}
-
-	void map(const std::string&);
-	void map(const std::string&, cu32&, cu32&);
-};
-
-void BufferMapper::map(const std::string& kernel_function_name) {
-
-	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
-	kernel.setArg(0, _input_buffer);
-	kernel.setArg(1, _output_buffer);
-
-	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
-}
-
-void BufferMapper::map(const std::string& kernel_function_name, cu32& width, cu32& height) {
-
-	cl::Kernel kernel = cl::Kernel(_program, kernel_function_name.c_str());
-	kernel.setArg(0, _input_buffer);
-	kernel.setArg(1, _output_buffer);
-	kernel.setArg(2, width);
-	kernel.setArg(3, height);
-
-	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
 }
 
 template<typename T>
@@ -212,18 +217,21 @@ void HistFilter<T>::output() {
 	cl::Buffer input_buffer(context, CL_MEM_READ_ONLY, input_size);
 	queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, input_size, &input_image.data()[0]);
 
-	cl::Buffer output_buffer(context, CL_MEM_READ_WRITE, input_size);
-	BufferMapper(program, queue, input_buffer, output_buffer, input_size).map("u8hsl");
+	cl::Buffer hsl_buffer(context, CL_MEM_READ_WRITE, input_size);
+	BufferMapper buffer_mapper(program, queue, &input_buffer, &hsl_buffer, input_size)("u8hsl");
 
-	std::vector<T> output_vector(input_size);
-	queue.enqueueReadBuffer(output_buffer, CL_TRUE, 0, input_size, &output_vector.data()[0]);
-	CImg<T> output_image(output_vector.data(), input_width, input_height, input_depth, input_spectrum);
-	CImgDisplay output_disp(output_image, "output");
+	const size_t hist_size = max_int<T>();
+	cl::Buffer hist_buffer(context, CL_MEM_READ_WRITE, hist_size);
+	buffer_mapper.new_output(&hist_buffer);
 
+	//std::vector<T> hsl_vector(input_size);
+	//queue.enqueueReadBuffer(hsl_buffer, CL_TRUE, 0, input_size, &hsl_vector.data()[0]);
+	//CImg<T> hsl_image(hsl_vector.data(), input_width, input_height, input_depth, input_spectrum);
+	//CImgDisplay hsl_disp(hsl_image, "hsl");
 
-	while (!output_disp.is_closed() && !output_disp.is_keyESC()) {
-		output_disp.wait(1);
-	}
+	//while (!hsl_disp.is_closed() && !hsl_disp.is_keyESC()) {
+	//	hsl_disp.wait(1);
+	//}
 }
 
 auto main(i32 argc, str* argv) -> i32 {
