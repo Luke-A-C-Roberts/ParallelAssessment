@@ -79,7 +79,7 @@ class BufferMapper {
 	cl::CommandQueue& _queue;
 	cl::Buffer* _input_buffer;
 	cl::Buffer* _output_buffer;
-	UINT_PTR _size;
+	size_t _size;
 
 public:
 	BufferMapper(
@@ -87,7 +87,7 @@ public:
 		cl::CommandQueue& queue,
 		cl::Buffer* input_buffer,
 		cl::Buffer* output_buffer,
-		const UINT_PTR& size
+		const size_t& size
 	) : _program(program),
 		_queue(queue),
 		_input_buffer(input_buffer),
@@ -97,9 +97,6 @@ public:
 	// curried function application with optional size
 	void operator()(const std::string&);
 	void operator()(const std::string&, cu32&, cu32&);
-
-	// rather than creating a new BufferMapper object the old output becomes the input to the next kernel function
-	void new_output(cl::Buffer*);
 };
 
 void BufferMapper::operator()(const std::string& kernel_function_name) {
@@ -122,11 +119,6 @@ void BufferMapper::operator()(const std::string& kernel_function_name, cu32& wid
 	_queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(_size), cl::NullRange);
 }
 
-void BufferMapper::new_output(cl::Buffer* new_output_buffer) {
-	_input_buffer = _output_buffer;
-	_output_buffer = new_output_buffer;
-}
-
 template <typename T>
 class HistFilter {
 	std::string _image_filename, _kernel_filename;
@@ -143,11 +135,11 @@ public:
 		ci32& platform_id,
 		ci32& device_id,
 		cbool& debug
-	): _image_filename(image_filename),
-	   _kernel_filename(kernel_filename),
-	   _platform_id(platform_id),
-	   _device_id(device_id),
-	   _debug(debug) {}
+	) : _image_filename(image_filename),
+		_kernel_filename(kernel_filename),
+		_platform_id(platform_id),
+		_device_id(device_id),
+		_debug(debug) {}
 
 	void output();
 };
@@ -171,14 +163,14 @@ auto HistFilter<T>::_load_image(const std::string& image_filename, const std::st
 	and and passes it by reference into a cimage_library::CImgDisplay so that it can later be displayed
 	*/
 	CImg<T> image_input(image_filename.c_str());
-	if (input_type == "rgb") { }
+	if (input_type == "rgb") {}
 	else if (input_type == "hsl") {
 		image_input = image_input.HSLtoRGB();
 	}
 	else if (input_type == "hsv") {
 		image_input = image_input.HSVtoRGB();
 	}
-	
+
 	return std::pair<CImg<T>, CImgDisplay>(
 		image_input,
 		CImgDisplay(image_input, "input")
@@ -193,7 +185,7 @@ void HistFilter<T>::output() {
 	auto input = _load_image(_image_filename, "rgb");
 	auto& input_image = input.first;
 	auto& input_disp = input.second;
-	const auto input_size = input_image.size();
+	const auto input_size = (size_t)input_image.size();
 	const auto input_height = input_image.height();
 	const auto input_width = input_image.width();
 	const auto input_depth = input_image.depth();
@@ -218,20 +210,23 @@ void HistFilter<T>::output() {
 	queue.enqueueWriteBuffer(input_buffer, CL_TRUE, 0, input_size, &input_image.data()[0]);
 
 	cl::Buffer hsl_buffer(context, CL_MEM_READ_WRITE, input_size);
-	BufferMapper buffer_mapper(program, queue, &input_buffer, &hsl_buffer, input_size)("u8hsl");
+	BufferMapper(program, queue, &input_buffer, &hsl_buffer, input_size)("u8hsl");
 
+	std::vector<T> hsl_vector(input_size);
+	queue.enqueueReadBuffer(hsl_buffer, CL_TRUE, 0, input_size, &hsl_vector.data()[0]);
+
+	// hist buffer must have a very large datatype to prevent overflowing. If the image was all one color
+	// for example, it would be a problem because one value of the histogram would get overflowed.
 	const size_t hist_size = max_int<T>();
-	cl::Buffer hist_buffer(context, CL_MEM_READ_WRITE, hist_size);
-	buffer_mapper.new_output(&hist_buffer);
+	std::vector<u32> hist_vector(hist_size, 0);
+	cl::Buffer hist_buffer(context, CL_MEM_READ_WRITE, hist_size * sizeof(u32));
 
-	//std::vector<T> hsl_vector(input_size);
-	//queue.enqueueReadBuffer(hsl_buffer, CL_TRUE, 0, input_size, &hsl_vector.data()[0]);
-	//CImg<T> hsl_image(hsl_vector.data(), input_width, input_height, input_depth, input_spectrum);
-	//CImgDisplay hsl_disp(hsl_image, "hsl");
+	CImg<T> hsl_image(hsl_vector.data(), input_width, input_height, input_depth, input_spectrum);
+	CImgDisplay hsl_disp(hsl_image, "hsl");
 
-	//while (!hsl_disp.is_closed() && !hsl_disp.is_keyESC()) {
-	//	hsl_disp.wait(1);
-	//}
+	while (!hsl_disp.is_closed() && !hsl_disp.is_keyESC()) {
+		hsl_disp.wait(1);
+	}
 }
 
 auto main(i32 argc, str* argv) -> i32 {

@@ -44,3 +44,15 @@ kernel void u8hsl(global const uchar* input, global uchar* output) {
 	output[gid + size / 3] = (uchar)(s * 255);
 	output[gid + 2 * size / 3] = (uchar)(l * 255);
 }
+
+
+
+//kernel void u8histogram(global const uchar* input, global uint* output, local uint* sums, uchar*) {
+//	int size = get_global_size(0);
+//	int gid = get_global_id(0);
+//
+//	if (gid > size / 3)
+//		return;
+//
+//	
+//}
